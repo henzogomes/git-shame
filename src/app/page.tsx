@@ -73,21 +73,28 @@ export default function Home() {
     setError("");
     setShameResult("");
 
-    // Track the form submission event
-    if (typeof window !== "undefined" && window.gtag) {
-      window.gtag("event", "username_submission", {
-        event_category: "engagement",
-        event_label: username,
-        username: username,
-      });
-    }
+    let isFromCache = false; // New parameter to track cache usage
 
     // Check cache first
     const cachedResult = checkCache(username, language);
     if (cachedResult) {
       setShameResult(cachedResult);
       setLoading(false);
-      return;
+      isFromCache = true; // Mark result as coming from cache
+    }
+
+    // Track the form submission event
+    if (typeof window !== "undefined" && window.gtag) {
+      window.gtag("event", "username_submission", {
+        event_category: "engagement",
+        event_label: username,
+        username: username,
+        from_cache: isFromCache, // Add the new parameter
+      });
+    }
+
+    if (isFromCache) {
+      return; // Stop further processing if result is from cache
     }
 
     try {

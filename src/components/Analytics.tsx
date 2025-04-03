@@ -10,21 +10,46 @@ type AnalyticsProps = {
 
 export default function Analytics({ gaId }: AnalyticsProps) {
   useEffect(() => {
-    // Initialize GA when the component mounts
-    window.dataLayer = window.dataLayer || [];
-    function gtag(...args: any[]) {
-      window.dataLayer.push(args);
+    if (!gaId) {
+      console.error("Google Analytics ID is missing.");
+      return;
     }
-    gtag("js", new Date());
-    gtag("config", gaId);
+
+    const onGtagLoad = () => {
+      if (typeof window !== "undefined") {
+        window.dataLayer = window.dataLayer || [];
+        function gtag(...args: any[]) {
+          window.dataLayer.push(args);
+        }
+        window.gtag = gtag;
+
+        gtag("js", new Date());
+        gtag("config", gaId);
+      }
+    };
+
+    // Attach the event listener for when the script loads
+    if (typeof window !== "undefined" && window.gtag !== undefined) {
+      onGtagLoad();
+    } else {
+      window.addEventListener("gtagLoaded", onGtagLoad);
+    }
+
+    return () => {
+      window.removeEventListener("gtagLoaded", onGtagLoad);
+    };
   }, [gaId]);
 
   return (
     <>
-      {/* Load Google Analytics script */}
       <Script
         strategy="afterInteractive"
         src={`https://www.googletagmanager.com/gtag/js?id=${gaId}`}
+        onLoad={() => {
+          console.log("Google Analytics script loaded.");
+          const event = new Event("gtagLoaded");
+          window.dispatchEvent(event); // Notify that gtag is ready
+        }}
       />
     </>
   );
