@@ -1,0 +1,7 @@
+docker run --name db_postgres -e POSTGRES_PASSWORD=docker -p 5432:5432 -d postgres
+docker start db_postgres
+
+npm migrate create create_user_table
+
+npm migrate up
+npm migrate down

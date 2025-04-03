@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import axios from "axios";
 import OpenAI from "openai";
 import { headers } from "next/headers";
-import { isRateLimited, getRateLimitReset } from "@/utils/rate-limiter";
+import { isRateLimited, getRateLimitReset } from "@/lib/rate-limiter";
 
 // Define interfaces for GitHub data
 interface GitHubRepo {
