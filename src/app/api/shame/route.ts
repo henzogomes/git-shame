@@ -3,6 +3,11 @@ import axios from "axios";
 import OpenAI from "openai";
 import { headers } from "next/headers";
 import { isRateLimited, getRateLimitReset } from "@/utils/rate-limiter";
+import { getCachedShame, cacheShame } from "@/utils/db";
+import { ensureDataDir } from "@/utils/ensure-data-dir";
+
+// Ensure data directory exists
+ensureDataDir();
 
 // Define interfaces for GitHub data
 interface GitHubRepo {
@@ -95,6 +100,19 @@ export async function GET(request: Request) {
   }
 
   try {
+    // Check if we have a cached response first
+    const cachedResult = await getCachedShame(username, preferredLanguage);
+
+    if (cachedResult) {
+      console.log(`Using cached shame for ${username} in ${preferredLanguage}`);
+      return NextResponse.json({
+        shame: cachedResult.shame_text,
+        language: preferredLanguage,
+        cached: true,
+      });
+    }
+
+    // No cache hit, proceed with the API calls
     // Fetch GitHub user data
     const githubResponse = await axios.get(
       `https://api.github.com/users/${username}`
@@ -161,9 +179,13 @@ export async function GET(request: Request) {
         ? "Hmm, não consegui pensar em algo inteligente para dizer. Este perfil do GitHub é entediante demais para zoar."
         : "Hmm, I couldn't think of anything clever to say. This GitHub profile is too boring to roast.");
 
+    // Cache the result for future requests
+    await cacheShame(username, preferredLanguage, shameText);
+
     return NextResponse.json({
       shame: shameText,
       language: preferredLanguage,
+      cached: false,
     });
   } catch (error) {
     console.error("Error:", error);
