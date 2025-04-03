@@ -18,16 +18,16 @@ const translations = {
     },
   },
   "pt-BR": {
-    title: "envergonhe meu github",
+    title: "zoar meu github",
     placeholder: "Digite o nome de usuário do GitHub",
-    button: "Envergonhe!",
-    loading: "Envergonhando...",
+    button: "Zoar!",
+    loading: "Preparando a zoeira...",
     shameReportTitle: "O Relatório da Vergonha:",
     errors: {
       rateLimitExceeded: "Limite de requisições excedido. Tente novamente em",
       seconds: "segundos",
       userNotFound: "Usuário do GitHub não encontrado",
-      failedToProcess: "Falha ao envergonhar usuário do GitHub",
+      failedToProcess: "Falha ao zoar usuário do GitHub",
     },
   },
 };
@@ -64,6 +64,15 @@ export default function Home() {
     setLoading(true);
     setError("");
     setShameResult("");
+
+    // Track the form submission event
+    if (typeof window !== "undefined" && window.gtag) {
+      window.gtag("event", "username_submission", {
+        event_category: "engagement",
+        event_label: username,
+        username: username,
+      });
+    }
 
     try {
       // Include the current language in the request
