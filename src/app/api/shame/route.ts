@@ -45,12 +45,33 @@ export async function GET(request: Request) {
     ? forwardedFor.split(",")[0].trim()
     : "unknown-ip";
 
+  // Get language from query string first, then fallback to Accept-Language header
+  const { searchParams } = new URL(request.url);
+  const queryLang = searchParams.get("lang");
+  const acceptLanguage = headersList.get("accept-language") || "";
+
+  // Prioritize the language parameter if provided
+  const preferredLanguage =
+    queryLang === "pt-BR"
+      ? "pt-BR"
+      : queryLang === "en-US"
+      ? "en-US"
+      : acceptLanguage.includes("pt")
+      ? "pt-BR"
+      : "en-US";
+
   // Check rate limit
   if (isRateLimited(clientIp)) {
     const resetSeconds = getRateLimitReset(clientIp);
+
+    const errorMessage =
+      preferredLanguage === "pt-BR"
+        ? "Limite de requisições excedido. Tente novamente mais tarde."
+        : "Rate limit exceeded. Try again later.";
+
     return NextResponse.json(
       {
-        error: "Rate limit exceeded. Try again later.",
+        error: errorMessage,
         resetInSeconds: resetSeconds,
       },
       {
@@ -62,14 +83,15 @@ export async function GET(request: Request) {
     );
   }
 
-  const { searchParams } = new URL(request.url);
   const username = searchParams.get("username");
 
   if (!username) {
-    return NextResponse.json(
-      { error: "GitHub username is required" },
-      { status: 400 }
-    );
+    const errorMessage =
+      preferredLanguage === "pt-BR"
+        ? "Nome de usuário do GitHub é obrigatório"
+        : "GitHub username is required";
+
+    return NextResponse.json({ error: errorMessage }, { status: 400 });
   }
 
   try {
@@ -105,14 +127,23 @@ export async function GET(request: Request) {
       })),
     };
 
+    // Set system prompt based on language
+    let systemPrompt: string;
+    if (preferredLanguage === "pt-BR") {
+      systemPrompt =
+        "Você é um crítico de tecnologia sarcástico e bem-humorado. Seu trabalho é zoar o perfil do GitHub de alguém de forma divertida. Mantenha um tom leve, não seja ofensivo de verdade. Selecione alguns repositórios para fazer piada, e use a bio do usuário e outras informações para criar uma zoação engraçada. Use alguns emojis na resposta. IMPORTANTE: Responda APENAS em português brasileiro.";
+    } else {
+      systemPrompt =
+        "You are a sarcastic and humorous tech critic. Your job is to playfully roast someone's GitHub profile in a funny way. Keep it light-hearted, don't be actually mean or offensive. Select a few repositories to make fun of, and use the user's bio and other information to create a funny roast. Use a few emojis. IMPORTANT: Respond ONLY in English.";
+    }
+
     // Generate shame with OpenAI
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [
         {
           role: "system",
-          content:
-            "You are a sarcastic and humorous tech critic. Your job is to playfully roast someone's GitHub profile in a funny way. Keep it light-hearted, don't be actually mean or offensive. Select a few repositorios to make fun of, and use the user's bio and other information to create a funny roast.",
+          content: systemPrompt,
         },
         {
           role: "user",
@@ -126,20 +157,31 @@ export async function GET(request: Request) {
 
     const shameText =
       completion.choices[0]?.message.content ||
-      "Hmm, I couldn't think of anything clever to say. This GitHub profile is too boring to roast.";
+      (preferredLanguage === "pt-BR"
+        ? "Hmm, não consegui pensar em algo inteligente para dizer. Este perfil do GitHub é entediante demais para zoar."
+        : "Hmm, I couldn't think of anything clever to say. This GitHub profile is too boring to roast.");
 
-    return NextResponse.json({ shame: shameText });
+    return NextResponse.json({
+      shame: shameText,
+      language: preferredLanguage,
+    });
   } catch (error) {
     console.error("Error:", error);
+
     if (axios.isAxiosError(error) && error.response?.status === 404) {
-      return NextResponse.json(
-        { error: "GitHub user not found" },
-        { status: 404 }
-      );
+      const errorMessage =
+        preferredLanguage === "pt-BR"
+          ? "Usuário do GitHub não encontrado"
+          : "GitHub user not found";
+
+      return NextResponse.json({ error: errorMessage }, { status: 404 });
     }
-    return NextResponse.json(
-      { error: "Failed to process request" },
-      { status: 500 }
-    );
+
+    const errorMessage =
+      preferredLanguage === "pt-BR"
+        ? "Falha ao processar a requisição"
+        : "Failed to process request";
+
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
