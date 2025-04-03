@@ -40,6 +40,14 @@ function getInitialLanguage(): "en-US" | "pt-BR" {
   return "en-US"; // Default fallback
 }
 
+// Add this interface for the cache entry type
+interface CacheEntry {
+  username: string;
+  timestamp: number; // Unix timestamp in milliseconds
+  language: "en-US" | "pt-BR";
+  result: string;
+}
+
 export default function Home() {
   // Use the getInitialLanguage function for initial state
   const [username, setUsername] = useState("");
@@ -74,6 +82,14 @@ export default function Home() {
       });
     }
 
+    // Check cache first
+    const cachedResult = checkCache(username, language);
+    if (cachedResult) {
+      setShameResult(cachedResult);
+      setLoading(false);
+      return;
+    }
+
     try {
       // Include the current language in the request
       const response = await fetch(
@@ -101,10 +117,85 @@ export default function Home() {
       if (data.language) {
         setLanguage(data.language as "en-US" | "pt-BR");
       }
+
+      // Add to cache
+      addToCache(username, data.language || language, data.shame);
     } catch (err) {
       setError(err instanceof Error ? err.message : t.errors.failedToProcess);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Function to check cache
+  const checkCache = (username: string, language: string): string | null => {
+    try {
+      const cacheKey = `github-shame-cache`;
+      const cacheData = localStorage.getItem(cacheKey);
+
+      if (!cacheData) return null;
+
+      const cache: CacheEntry[] = JSON.parse(cacheData);
+      const now = Date.now();
+      const ONE_DAY = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+      // Find matching entry that's less than 24 hours old
+      const entry = cache.find(
+        (entry) =>
+          entry.username.toLowerCase() === username.toLowerCase() &&
+          entry.language === language &&
+          now - entry.timestamp < ONE_DAY
+      );
+
+      return entry ? entry.result : null;
+    } catch (error) {
+      // If there's an error reading cache, just proceed with API call
+      console.error("Cache error:", error);
+      return null;
+    }
+  };
+
+  // Function to add to cache
+  const addToCache = (
+    username: string,
+    language: "en-US" | "pt-BR",
+    result: string
+  ) => {
+    try {
+      const cacheKey = `github-shame-cache`;
+      const cacheData = localStorage.getItem(cacheKey);
+
+      let cache: CacheEntry[] = [];
+      if (cacheData) {
+        cache = JSON.parse(cacheData);
+
+        // Remove any existing entries for this username & language
+        cache = cache.filter(
+          (entry) =>
+            !(
+              entry.username.toLowerCase() === username.toLowerCase() &&
+              entry.language === language
+            )
+        );
+      }
+
+      // Add new entry
+      cache.push({
+        username,
+        language,
+        timestamp: Date.now(),
+        result,
+      });
+
+      // Limit cache size (optional, keeps last 50 entries)
+      if (cache.length > 50) {
+        cache = cache.slice(-50);
+      }
+
+      localStorage.setItem(cacheKey, JSON.stringify(cache));
+    } catch (error) {
+      console.error("Error adding to cache:", error);
+      // Continue even if caching fails
     }
   };
 
