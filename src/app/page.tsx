@@ -5,16 +5,16 @@ import { useState, useEffect } from "react";
 // Translations
 const translations = {
   "en-US": {
-    title: "shame my github",
+    title: "roast my github",
     placeholder: "Enter GitHub username",
-    button: "Shame Them!",
-    loading: "Shaming...",
-    shameReportTitle: "The Shame Report:",
+    button: "Roast Them!",
+    loading: "Roasting...",
+    shameReportTitle: "The Roast Report:",
     errors: {
       rateLimitExceeded: "Rate limit exceeded. Try again in",
       seconds: "seconds",
       userNotFound: "GitHub user not found",
-      failedToProcess: "Failed to shame GitHub user",
+      failedToProcess: "Failed to roast GitHub user",
     },
   },
   "pt-BR": {
