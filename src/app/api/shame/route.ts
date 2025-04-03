@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import axios from "axios";
 import OpenAI from "openai";
+import { headers } from "next/headers";
+import { isRateLimited, getRateLimitReset } from "@/utils/rate-limiter";
 
 // Define interfaces for GitHub data
 interface GitHubRepo {
@@ -36,6 +38,30 @@ const openai = new OpenAI({
 });
 
 export async function GET(request: Request) {
+  // Get client IP for rate limiting
+  const headersList = await headers();
+  const forwardedFor = headersList.get("x-forwarded-for");
+  const clientIp = forwardedFor
+    ? forwardedFor.split(",")[0].trim()
+    : "unknown-ip";
+
+  // Check rate limit
+  if (isRateLimited(clientIp)) {
+    const resetSeconds = getRateLimitReset(clientIp);
+    return NextResponse.json(
+      {
+        error: "Rate limit exceeded. Try again later.",
+        resetInSeconds: resetSeconds,
+      },
+      {
+        status: 429,
+        headers: {
+          "X-RateLimit-Reset": resetSeconds.toString(),
+        },
+      }
+    );
+  }
+
   const { searchParams } = new URL(request.url);
   const username = searchParams.get("username");
 

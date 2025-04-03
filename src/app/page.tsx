@@ -18,6 +18,16 @@ export default function Home() {
       const response = await fetch(
         `/api/shame?username=${encodeURIComponent(username)}`
       );
+
+      if (response.status === 429) {
+        // Handle rate limiting
+        const data = await response.json();
+        setError(
+          `${data.error} Please try again in ${data.resetInSeconds} seconds.`
+        );
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(await response.text());
       }
