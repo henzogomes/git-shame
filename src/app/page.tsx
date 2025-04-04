@@ -73,28 +73,23 @@ export default function Home() {
     setError("");
     setShameResult("");
 
-    let isFromCache = false; // New parameter to track cache usage
-
-    // Check cache first
+    // Check localStorage cache first
     const cachedResult = checkCache(username, language);
     if (cachedResult) {
       setShameResult(cachedResult);
       setLoading(false);
-      isFromCache = true; // Mark result as coming from cache
-    }
 
-    // Track the form submission event
-    if (typeof window !== "undefined" && window.gtag) {
-      window.gtag("event", "username_submission", {
-        event_category: "engagement",
-        event_label: username,
-        username: username,
-        from_cache: isFromCache, // Add the new parameter
-      });
-    }
+      // Track the form submission event with cache info
+      if (typeof window !== "undefined" && window.gtag) {
+        window.gtag("event", "username_submission", {
+          event_category: "engagement",
+          event_label: username,
+          username: username,
+          from_cache: "localStorage",
+        });
+      }
 
-    if (isFromCache) {
-      return; // Stop further processing if result is from cache
+      return; // Stop further processing if result is from localStorage
     }
 
     try {
@@ -125,8 +120,18 @@ export default function Home() {
         setLanguage(data.language as "en-US" | "pt-BR");
       }
 
-      // Add to cache
+      // Add to localStorage cache
       addToCache(username, data.language || language, data.shame);
+
+      // Track with info about which cache was used
+      if (typeof window !== "undefined" && window.gtag) {
+        window.gtag("event", "username_submission", {
+          event_category: "engagement",
+          event_label: username,
+          username: username,
+          from_cache: data.fromCache ? "database" : "none",
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : t.errors.failedToProcess);
     } finally {
