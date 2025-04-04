@@ -1,42 +1,32 @@
 import { NextResponse } from "next/server";
 import axios from "axios";
-import OpenAI from "openai";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createDeepSeek } from "@ai-sdk/deepseek";
+import { streamText } from "ai";
 import { headers } from "next/headers";
 import { isRateLimited, getRateLimitReset } from "@/lib/rate-limiter";
 import { shameCacheController } from "@/controllers/ShameCacheController";
+import { GitHubRepo, GitHubProfile } from "@/types/types";
+import { Message } from "ai";
+import translations from "@/translations";
 
-// Define interfaces for GitHub data
-interface GitHubRepo {
-  name: string;
-  description: string | null;
-  stargazers_count: number;
-  forks_count: number;
-  language: string | null;
-}
-
-interface GitHubProfile {
-  username: string;
-  name: string | null;
-  bio: string | null;
-  followers: number;
-  following: number;
-  publicRepos: number;
-  accountCreatedAt: string;
-  company: string | null;
-  location: string | null;
-  topRepos: {
-    name: string;
-    description: string | null;
-    stars: number;
-    forks: number;
-    language: string | null;
-  }[];
-}
-
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_KEY,
+// Initialize OpenAI client with Vercel AI SDK
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_KEY || "",
 });
+
+// Initialize DeepSeek client
+const deepseek = createDeepSeek({
+  apiKey: process.env.DEEPSEEK_API_KEY || "",
+});
+
+// Check if caching is enabled
+const isCacheEnabled = process.env.NEXT_PUBLIC_CACHE !== "false";
+
+// Get the model to use from environment variable
+const modelToUse = (
+  process.env.NEXT_PUBLIC_LLM || "gpt-3.5-turbo"
+).toLowerCase();
 
 export async function GET(request: Request) {
   // Get client IP for rate limiting
@@ -61,18 +51,16 @@ export async function GET(request: Request) {
       ? "pt-BR"
       : "en-US";
 
+  // Get translations for the preferred language
+  const t = translations[preferredLanguage];
+
   // Check rate limit
   if (isRateLimited(clientIp)) {
     const resetSeconds = getRateLimitReset(clientIp);
 
-    const errorMessage =
-      preferredLanguage === "pt-BR"
-        ? "Limite de requisições excedido. Tente novamente mais tarde."
-        : "Rate limit exceeded. Try again later.";
-
     return NextResponse.json(
       {
-        error: errorMessage,
+        error: `${t.errors.rateLimitExceeded} ${t.errors.seconds}`,
         resetInSeconds: resetSeconds,
       },
       {
@@ -87,26 +75,29 @@ export async function GET(request: Request) {
   const username = searchParams.get("username");
 
   if (!username) {
-    const errorMessage =
-      preferredLanguage === "pt-BR"
-        ? "Nome de usuário do GitHub é obrigatório"
-        : "GitHub username is required";
-
-    return NextResponse.json({ error: errorMessage }, { status: 400 });
+    return NextResponse.json(
+      { error: t.errors.usernameRequired },
+      { status: 400 }
+    );
   }
 
   try {
+    let cachedShame = null;
+
     // Check cache first before making external API calls
-    const cachedShame = await shameCacheController.get(
+    cachedShame = await shameCacheController.get(
       username,
-      preferredLanguage
+      preferredLanguage,
+      modelToUse
     );
 
-    if (cachedShame) {
+    // Use cached results if available and caching is enabled
+    if (cachedShame && isCacheEnabled) {
       return NextResponse.json({
         shame: cachedShame.shame_text,
         language: cachedShame.language,
         fromCache: true,
+        model: cachedShame.llm_model || modelToUse,
       });
     }
 
@@ -122,7 +113,7 @@ export async function GET(request: Request) {
     );
     const reposData = reposResponse.data as GitHubRepo[];
 
-    // Prepare data for OpenAI
+    // Prepare data for LLM
     const githubProfile: GitHubProfile = {
       username: userData.login,
       name: userData.name,
@@ -142,69 +133,210 @@ export async function GET(request: Request) {
       })),
     };
 
-    // Set system prompt based on language
-    let systemPrompt: string;
-    if (preferredLanguage === "pt-BR") {
-      systemPrompt =
-        "Você é um crítico de tecnologia sarcástico e bem-humorado. Seu trabalho é zoar o perfil do GitHub de alguém de forma divertida. Mantenha um tom leve, não seja ofensivo de verdade. Selecione alguns repositórios para fazer piada, e use a bio do usuário e outras informações para criar uma zoação engraçada. Use alguns emojis na resposta. IMPORTANTE: Responda APENAS em português brasileiro.";
-    } else {
-      systemPrompt =
-        "You are a sarcastic and humorous tech critic. Your job is to playfully roast someone's GitHub profile in a funny way. Keep it light-hearted, don't be actually mean or offensive. Select a few repositories to make fun of, and use the user's bio and other information to create a funny roast. Use a few emojis. IMPORTANT: Respond ONLY in English.";
+    // Set system prompt from translations
+    const systemPrompt = t.api.prompts.system;
+
+    // Correctly type the messages for AI SDK
+    const messages: Message[] = [
+      {
+        id: "system",
+        role: "system",
+        content: systemPrompt,
+      },
+      {
+        id: "user",
+        role: "user",
+        content: `Roast this GitHub profile in a funny way: ${JSON.stringify(
+          githubProfile
+        )}`,
+      },
+    ];
+
+    // Set shouldStream to true by default when no cache is available
+    const shouldStream = true;
+
+    if (shouldStream) {
+      if (modelToUse === "deepseek") {
+        const { textStream } = streamText({
+          model: deepseek("deepseek-chat"),
+          messages,
+          temperature: 0.7,
+          maxTokens: 500,
+        });
+
+        // Create a variable to collect the full text for saving to cache
+        let fullStreamText = "";
+
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              try {
+                const encoder = new TextEncoder();
+                for await (const delta of textStream) {
+                  fullStreamText += delta; // Collect the full text
+                  controller.enqueue(
+                    encoder.encode(
+                      `data: ${JSON.stringify({ text: delta })}\n\n`
+                    )
+                  );
+                }
+
+                // Save to cache after the stream is complete
+                await shameCacheController
+                  .cacheUser({
+                    username: username,
+                    shame_text: fullStreamText,
+                    language: preferredLanguage,
+                    llm_model: modelToUse,
+                  })
+                  .catch((err) =>
+                    console.error("Failed to save to cache:", err)
+                  );
+
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                controller.close();
+              } catch (error) {
+                console.error("Stream error:", error);
+                controller.error(error);
+              }
+            },
+          }),
+          {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
+          }
+        );
+      } else {
+        const { textStream } = streamText({
+          model: openai("gpt-3.5-turbo"),
+          messages,
+          temperature: 0.7,
+          maxTokens: 500,
+        });
+
+        // Create a variable to collect the full text for saving to cache
+        let fullStreamText = "";
+
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              try {
+                const encoder = new TextEncoder();
+                for await (const delta of textStream) {
+                  fullStreamText += delta; // Collect the full text
+                  controller.enqueue(
+                    encoder.encode(
+                      `data: ${JSON.stringify({ text: delta })}\n\n`
+                    )
+                  );
+                }
+
+                // Save to cache after the stream is complete
+                await shameCacheController
+                  .cacheUser({
+                    username: username,
+                    shame_text: fullStreamText,
+                    language: preferredLanguage,
+                    llm_model: modelToUse,
+                  })
+                  .catch((err) =>
+                    console.error("Failed to save to cache:", err)
+                  );
+
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                controller.close();
+              } catch (error) {
+                console.error("Stream error:", error);
+                controller.error(error);
+              }
+            },
+          }),
+          {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
+          }
+        );
+      }
     }
 
-    // Generate shame with OpenAI
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        {
-          role: "user",
-          content: `Roast this GitHub profile in a funny way: ${JSON.stringify(
-            githubProfile
-          )}`,
-        },
-      ],
-      max_tokens: 500,
-    });
+    // This part should never be reached with the new logic
+    // but keep as fallback
+    let shameText = "";
 
-    const shameText =
-      completion.choices[0]?.message.content ||
-      (preferredLanguage === "pt-BR"
-        ? "Hmm, não consegui pensar em algo inteligente para dizer. Este perfil do GitHub é entediante demais para zoar."
-        : "Hmm, I couldn't think of anything clever to say. This GitHub profile is too boring to roast.");
+    // Generate shame with the model specified in environment variable
+    try {
+      if (modelToUse === "deepseek") {
+        // Generate shame with DeepSeek
+        const stream = streamText({
+          model: deepseek("deepseek-chat"),
+          messages,
+          temperature: 0.7,
+          maxTokens: 500,
+        });
 
-    // Store the result in cache
-    await shameCacheController.create({
+        // Collect all chunks into a single string
+        let fullText = "";
+        for await (const chunk of stream.textStream) {
+          fullText += chunk;
+        }
+        shameText = fullText;
+      } else {
+        // Default to OpenAI gpt-3.5-turbo using Vercel AI SDK
+        const stream = streamText({
+          model: openai("gpt-3.5-turbo"),
+          messages,
+          temperature: 0.7,
+          maxTokens: 500,
+        });
+
+        // Collect all chunks into a single string
+        let fullText = "";
+        for await (const chunk of stream.textStream) {
+          fullText += chunk;
+        }
+        shameText = fullText;
+      }
+    } catch (error) {
+      console.error("Error generating text:", error);
+      shameText = "";
+    }
+
+    // Use fallback text from translations if the response is empty
+    const finalShameText = shameText || t.api.fallbackText;
+
+    // Always store the result in cache regardless of cache setting
+    await shameCacheController.cacheUser({
       username: username,
-      shame_text: shameText,
+      shame_text: finalShameText,
       language: preferredLanguage,
+      llm_model: modelToUse,
     });
 
     return NextResponse.json({
-      shame: shameText,
+      shame: finalShameText,
       language: preferredLanguage,
       fromCache: false,
+      model: modelToUse,
     });
   } catch (error) {
     console.error("Error:", error);
 
     if (axios.isAxiosError(error) && error.response?.status === 404) {
-      const errorMessage =
-        preferredLanguage === "pt-BR"
-          ? "Usuário do GitHub não encontrado"
-          : "GitHub user not found";
-
-      return NextResponse.json({ error: errorMessage }, { status: 404 });
+      return NextResponse.json(
+        { error: t.errors.userNotFound },
+        { status: 404 }
+      );
     }
 
-    const errorMessage =
-      preferredLanguage === "pt-BR"
-        ? "Falha ao processar a requisição"
-        : "Failed to process request";
-
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return NextResponse.json(
+      { error: t.errors.requestFailed },
+      { status: 500 }
+    );
   }
 }
