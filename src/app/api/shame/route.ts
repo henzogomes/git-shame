@@ -2,11 +2,12 @@ import { NextResponse } from "next/server";
 import axios from "axios";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createDeepSeek } from "@ai-sdk/deepseek";
-import { generateText } from "ai";
+import { streamText } from "ai";
 import { headers } from "next/headers";
 import { isRateLimited, getRateLimitReset } from "@/lib/rate-limiter";
 import { shameCacheController } from "@/controllers/ShameCacheController";
 import { GitHubRepo, GitHubProfile } from "@/types/types";
+import { Message } from "ai";
 
 // Initialize OpenAI client with Vercel AI SDK
 const openai = createOpenAI({
@@ -36,6 +37,9 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const queryLang = searchParams.get("lang");
   const acceptLanguage = headersList.get("accept-language") || "";
+
+  // Check if streaming is requested
+  const shouldStream = searchParams.get("stream") === "true";
 
   // Prioritize the language parameter if provided
   const preferredLanguage =
@@ -83,7 +87,7 @@ export async function GET(request: Request) {
 
   try {
     // Check cache first before making external API calls (only if caching is enabled)
-    if (isCacheEnabled) {
+    if (isCacheEnabled && !shouldStream) {
       const cachedShame = await shameCacheController.get(
         username,
         preferredLanguage
@@ -141,51 +145,138 @@ export async function GET(request: Request) {
         "You are a sarcastic and humorous tech critic. Your job is to playfully roast someone's GitHub profile in a funny way. Keep it light-hearted, don't be actually mean or offensive. Select a few repositories to make fun of, and use the user's bio and other information to create a funny roast. Use a few emojis. IMPORTANT: Respond ONLY in English.";
     }
 
+    // Correctly type the messages for AI SDK
+    const messages: Message[] = [
+      {
+        id: "system",
+        role: "system",
+        content: systemPrompt,
+      },
+      {
+        id: "user",
+        role: "user",
+        content: `Roast this GitHub profile in a funny way: ${JSON.stringify(
+          githubProfile
+        )}`,
+      },
+    ];
+
+    // If streaming is requested, return streaming response
+    if (shouldStream) {
+      if (modelToUse === "deepseek") {
+        const { textStream } = streamText({
+          model: deepseek("deepseek-chat"),
+          messages,
+          temperature: 0.7,
+          maxTokens: 500,
+        });
+
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              try {
+                const encoder = new TextEncoder();
+                for await (const delta of textStream) {
+                  controller.enqueue(
+                    encoder.encode(
+                      `data: ${JSON.stringify({ text: delta })}\n\n`
+                    )
+                  );
+                }
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                controller.close();
+              } catch (error) {
+                console.error("Stream error:", error);
+                controller.error(error);
+              }
+            },
+          }),
+          {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
+          }
+        );
+      } else {
+        const { textStream } = streamText({
+          model: openai("gpt-3.5-turbo"),
+          messages,
+          temperature: 0.7,
+          maxTokens: 500,
+        });
+
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              try {
+                const encoder = new TextEncoder();
+                for await (const delta of textStream) {
+                  controller.enqueue(
+                    encoder.encode(
+                      `data: ${JSON.stringify({ text: delta })}\n\n`
+                    )
+                  );
+                }
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                controller.close();
+              } catch (error) {
+                console.error("Stream error:", error);
+                controller.error(error);
+              }
+            },
+          }),
+          {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
+          }
+        );
+      }
+    }
+
+    // Non-streaming flow
     let shameText = "";
 
     // Generate shame with the model specified in environment variable
-    if (modelToUse === "deepseek") {
-      // Generate shame with DeepSeek
-      const { text } = await generateText({
-        model: deepseek("deepseek-chat"),
-        messages: [
-          {
-            role: "system",
-            content: systemPrompt,
-          },
-          {
-            role: "user",
-            content: `Roast this GitHub profile in a funny way: ${JSON.stringify(
-              githubProfile
-            )}`,
-          },
-        ],
-        temperature: 0.7,
-        maxTokens: 500,
-      });
+    try {
+      if (modelToUse === "deepseek") {
+        // Generate shame with DeepSeek
+        const stream = streamText({
+          model: deepseek("deepseek-chat"),
+          messages,
+          temperature: 0.7,
+          maxTokens: 500,
+        });
 
-      shameText = text || "";
-    } else {
-      // Default to OpenAI ChatGPT using Vercel AI SDK
-      const { text } = await generateText({
-        model: openai("gpt-3.5-turbo"),
-        messages: [
-          {
-            role: "system",
-            content: systemPrompt,
-          },
-          {
-            role: "user",
-            content: `Roast this GitHub profile in a funny way: ${JSON.stringify(
-              githubProfile
-            )}`,
-          },
-        ],
-        temperature: 0.7,
-        maxTokens: 500,
-      });
+        // Collect all chunks into a single string
+        let fullText = "";
+        for await (const chunk of stream.textStream) {
+          fullText += chunk;
+        }
+        shameText = fullText;
+      } else {
+        // Default to OpenAI ChatGPT using Vercel AI SDK
+        const stream = streamText({
+          model: openai("gpt-3.5-turbo"),
+          messages,
+          temperature: 0.7,
+          maxTokens: 500,
+        });
 
-      shameText = text || "";
+        // Collect all chunks into a single string
+        let fullText = "";
+        for await (const chunk of stream.textStream) {
+          fullText += chunk;
+        }
+        shameText = fullText;
+      }
+    } catch (error) {
+      console.error("Error generating text:", error);
+      shameText = "";
     }
 
     // Use fallback text if the response is empty

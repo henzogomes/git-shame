@@ -53,6 +53,7 @@ export default function Home() {
   const [isClient, setIsClient] = useState(false);
   const [isCacheEnabled, setIsCacheEnabled] = useState(true);
   const [currentModel, setCurrentModel] = useState("chatgpt");
+  const useStreaming = true;
 
   // Mark when client-side rendering is complete and get environment variables
   useEffect(() => {
@@ -74,8 +75,8 @@ export default function Home() {
     setError("");
     setShameResult("");
 
-    // Check localStorage cache first - only if caching is enabled
-    if (isCacheEnabled) {
+    // Check localStorage cache first - only if caching is enabled and not streaming
+    if (isCacheEnabled && !useStreaming) {
       const cachedResult = checkCache(username, language, currentModel);
       if (cachedResult) {
         setShameResult(cachedResult);
@@ -101,53 +102,121 @@ export default function Home() {
       // Use the combined endpoint for all requests
       const apiRoute = "/api/shame";
 
-      // Include the current language in the request
-      const response = await fetch(
-        `${apiRoute}?username=${encodeURIComponent(username)}&lang=${language}`
-      );
+      if (useStreaming) {
+        // Handle streaming response
+        const response = await fetch(
+          `${apiRoute}?username=${encodeURIComponent(
+            username
+          )}&lang=${language}&stream=true`
+        );
 
-      if (response.status === 429) {
-        // Handle rate limiting
+        if (!response.ok) {
+          if (response.status === 429) {
+            const data = await response.json();
+            setError(
+              `${data.error} ${t.errors.rateLimitExceeded} ${data.resetInSeconds} ${t.errors.seconds}.`
+            );
+          } else {
+            const errorData = await response.json();
+            throw new Error(errorData.error || response.statusText);
+          }
+          setLoading(false);
+          return;
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error("Response body is not readable");
+        }
+
+        // Process the stream
+        setShameResult("");
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const text = decoder.decode(value, { stream: true });
+          const lines = text.split("\n\n");
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const data = line.substring(6);
+              if (data === "[DONE]") {
+                // Stream completed
+                break;
+              }
+
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.text) {
+                  setShameResult((prev) => prev + parsed.text);
+                }
+              } catch (e) {
+                console.log(e);
+                // Ignore parse errors for incomplete chunks
+              }
+            }
+          }
+        }
+
+        // If caching is enabled, add the final result to the cache
+        if (isCacheEnabled && shameResult) {
+          addToCache(username, language, shameResult, currentModel);
+        }
+      } else {
+        // Handle regular response (non-streaming)
+        const response = await fetch(
+          `${apiRoute}?username=${encodeURIComponent(
+            username
+          )}&lang=${language}`
+        );
+
+        if (response.status === 429) {
+          // Handle rate limiting
+          const data = await response.json();
+          setError(
+            `${data.error} ${t.errors.rateLimitExceeded} ${data.resetInSeconds} ${t.errors.seconds}.`
+          );
+          setLoading(false);
+          return;
+        }
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || response.statusText);
+        }
+
         const data = await response.json();
-        setError(
-          `${data.error} ${t.errors.rateLimitExceeded} ${data.resetInSeconds} ${t.errors.seconds}.`
-        );
-        return;
-      }
+        setShameResult(data.shame);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || response.statusText);
-      }
+        // Update language if the API detected a different language
+        if (data.language) {
+          setLanguage(data.language as "en-US" | "pt-BR");
+        }
 
-      const data = await response.json();
-      setShameResult(data.shame);
+        // Add to localStorage cache with model information - only if caching is enabled
+        if (isCacheEnabled) {
+          addToCache(
+            username,
+            data.language || language,
+            data.shame,
+            data.model || currentModel
+          );
+        }
 
-      // Update language if the API detected a different language
-      if (data.language) {
-        setLanguage(data.language as "en-US" | "pt-BR");
-      }
-
-      // Add to localStorage cache with model information - only if caching is enabled
-      if (isCacheEnabled) {
-        addToCache(
-          username,
-          data.language || language,
-          data.shame,
-          data.model || currentModel
-        );
-      }
-
-      // Track with info about which cache was used
-      if (typeof window !== "undefined" && window.gtag) {
-        window.gtag("event", "username_submission", {
-          event_category: "engagement",
-          event_label: username,
-          username: username,
-          from_cache: data.fromCache ? "database" : "none",
-          model: data.model || currentModel,
-          cache_enabled: isCacheEnabled,
-        });
+        // Track with info about which cache was used
+        if (typeof window !== "undefined" && window.gtag) {
+          window.gtag("event", "username_submission", {
+            event_category: "engagement",
+            event_label: username,
+            username: username,
+            from_cache: data.fromCache ? "database" : "none",
+            model: data.model || currentModel,
+            cache_enabled: isCacheEnabled,
+          });
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : t.errors.failedToProcess);
