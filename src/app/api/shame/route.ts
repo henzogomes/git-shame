@@ -1,42 +1,28 @@
 import { NextResponse } from "next/server";
 import axios from "axios";
 import OpenAI from "openai";
+import { createDeepSeek } from "@ai-sdk/deepseek";
+import { generateText } from "ai";
 import { headers } from "next/headers";
 import { isRateLimited, getRateLimitReset } from "@/lib/rate-limiter";
 import { shameCacheController } from "@/controllers/ShameCacheController";
-
-// Define interfaces for GitHub data
-interface GitHubRepo {
-  name: string;
-  description: string | null;
-  stargazers_count: number;
-  forks_count: number;
-  language: string | null;
-}
-
-interface GitHubProfile {
-  username: string;
-  name: string | null;
-  bio: string | null;
-  followers: number;
-  following: number;
-  publicRepos: number;
-  accountCreatedAt: string;
-  company: string | null;
-  location: string | null;
-  topRepos: {
-    name: string;
-    description: string | null;
-    stars: number;
-    forks: number;
-    language: string | null;
-  }[];
-}
+import { GitHubRepo, GitHubProfile } from "@/types/types";
 
 // Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_KEY,
 });
+
+// Initialize DeepSeek client
+const deepseek = createDeepSeek({
+  apiKey: process.env.DEEPSEEK_API_KEY || "",
+});
+
+// Check if caching is enabled
+const isCacheEnabled = process.env.NEXT_PUBLIC_CACHE !== "false";
+
+// Get the model to use from environment variable
+const modelToUse = (process.env.NEXT_PUBLIC_LLM || "chatgpt").toLowerCase();
 
 export async function GET(request: Request) {
   // Get client IP for rate limiting
@@ -96,18 +82,21 @@ export async function GET(request: Request) {
   }
 
   try {
-    // Check cache first before making external API calls
-    const cachedShame = await shameCacheController.get(
-      username,
-      preferredLanguage
-    );
+    // Check cache first before making external API calls (only if caching is enabled)
+    if (isCacheEnabled) {
+      const cachedShame = await shameCacheController.get(
+        username,
+        preferredLanguage
+      );
 
-    if (cachedShame) {
-      return NextResponse.json({
-        shame: cachedShame.shame_text,
-        language: cachedShame.language,
-        fromCache: true,
-      });
+      if (cachedShame) {
+        return NextResponse.json({
+          shame: cachedShame.shame_text,
+          language: cachedShame.language,
+          fromCache: true,
+          model: modelToUse,
+        });
+      }
     }
 
     // Fetch GitHub user data
@@ -122,7 +111,7 @@ export async function GET(request: Request) {
     );
     const reposData = reposResponse.data as GitHubRepo[];
 
-    // Prepare data for OpenAI
+    // Prepare data for LLM
     const githubProfile: GitHubProfile = {
       username: userData.login,
       name: userData.name,
@@ -152,41 +141,73 @@ export async function GET(request: Request) {
         "You are a sarcastic and humorous tech critic. Your job is to playfully roast someone's GitHub profile in a funny way. Keep it light-hearted, don't be actually mean or offensive. Select a few repositories to make fun of, and use the user's bio and other information to create a funny roast. Use a few emojis. IMPORTANT: Respond ONLY in English.";
     }
 
-    // Generate shame with OpenAI
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        {
-          role: "user",
-          content: `Roast this GitHub profile in a funny way: ${JSON.stringify(
-            githubProfile
-          )}`,
-        },
-      ],
-      max_tokens: 500,
-    });
+    let shameText = "";
 
-    const shameText =
-      completion.choices[0]?.message.content ||
+    // Generate shame with the model specified in environment variable
+    if (modelToUse === "deepseek") {
+      // Generate shame with DeepSeek
+      const { text } = await generateText({
+        model: deepseek("deepseek-chat"),
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          {
+            role: "user",
+            content: `Roast this GitHub profile in a funny way: ${JSON.stringify(
+              githubProfile
+            )}`,
+          },
+        ],
+        temperature: 0.7,
+        maxTokens: 500,
+      });
+
+      shameText = text || "";
+    } else {
+      // Default to OpenAI ChatGPT
+      const completion = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          {
+            role: "user",
+            content: `Roast this GitHub profile in a funny way: ${JSON.stringify(
+              githubProfile
+            )}`,
+          },
+        ],
+        max_tokens: 500,
+      });
+
+      shameText = completion.choices[0]?.message.content || "";
+    }
+
+    // Use fallback text if the response is empty
+    const finalShameText =
+      shameText ||
       (preferredLanguage === "pt-BR"
         ? "Hmm, não consegui pensar em algo inteligente para dizer. Este perfil do GitHub é entediante demais para zoar."
         : "Hmm, I couldn't think of anything clever to say. This GitHub profile is too boring to roast.");
 
-    // Store the result in cache
-    await shameCacheController.create({
-      username: username,
-      shame_text: shameText,
-      language: preferredLanguage,
-    });
+    // Store the result in cache (only if caching is enabled)
+    if (isCacheEnabled) {
+      await shameCacheController.create({
+        username: username,
+        shame_text: finalShameText,
+        language: preferredLanguage,
+      });
+    }
 
     return NextResponse.json({
-      shame: shameText,
+      shame: finalShameText,
       language: preferredLanguage,
       fromCache: false,
+      model: modelToUse,
     });
   } catch (error) {
     console.error("Error:", error);

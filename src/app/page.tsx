@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { CacheEntry } from "@/types/types";
 
 // Translations
 const translations = {
@@ -40,14 +41,6 @@ function getInitialLanguage(): "en-US" | "pt-BR" {
   return "en-US"; // Default fallback
 }
 
-// Add this interface for the cache entry type
-interface CacheEntry {
-  username: string;
-  timestamp: number; // Unix timestamp in milliseconds
-  language: "en-US" | "pt-BR";
-  result: string;
-}
-
 export default function Home() {
   // Use the getInitialLanguage function for initial state
   const [username, setUsername] = useState("");
@@ -58,10 +51,18 @@ export default function Home() {
     getInitialLanguage
   );
   const [isClient, setIsClient] = useState(false);
+  const [isCacheEnabled, setIsCacheEnabled] = useState(true);
+  const [currentModel, setCurrentModel] = useState("chatgpt");
 
-  // Mark when client-side rendering is complete
+  // Mark when client-side rendering is complete and get environment variables
   useEffect(() => {
     setIsClient(true);
+
+    // Get cache setting from environment
+    setIsCacheEnabled(process.env.NEXT_PUBLIC_CACHE !== "false");
+
+    // Get current model from environment
+    setCurrentModel(process.env.NEXT_PUBLIC_LLM || "chatgpt");
   }, []);
 
   // Get the translations after ensuring we have the correct language
@@ -73,29 +74,36 @@ export default function Home() {
     setError("");
     setShameResult("");
 
-    // Check localStorage cache first
-    const cachedResult = checkCache(username, language);
-    if (cachedResult) {
-      setShameResult(cachedResult);
-      setLoading(false);
+    // Check localStorage cache first - only if caching is enabled
+    if (isCacheEnabled) {
+      const cachedResult = checkCache(username, language, currentModel);
+      if (cachedResult) {
+        setShameResult(cachedResult);
+        setLoading(false);
 
-      // Track the form submission event with cache info
-      if (typeof window !== "undefined" && window.gtag) {
-        window.gtag("event", "username_submission", {
-          event_category: "engagement",
-          event_label: username,
-          username: username,
-          from_cache: "localStorage",
-        });
+        // Track the form submission event with cache info
+        if (typeof window !== "undefined" && window.gtag) {
+          window.gtag("event", "username_submission", {
+            event_category: "engagement",
+            event_label: username,
+            username: username,
+            from_cache: "localStorage",
+            model: currentModel,
+            cache_enabled: isCacheEnabled,
+          });
+        }
+
+        return; // Stop further processing if result is from localStorage
       }
-
-      return; // Stop further processing if result is from localStorage
     }
 
     try {
+      // Use the combined endpoint for all requests
+      const apiRoute = "/api/shame";
+
       // Include the current language in the request
       const response = await fetch(
-        `/api/shame?username=${encodeURIComponent(username)}&lang=${language}`
+        `${apiRoute}?username=${encodeURIComponent(username)}&lang=${language}`
       );
 
       if (response.status === 429) {
@@ -120,8 +128,15 @@ export default function Home() {
         setLanguage(data.language as "en-US" | "pt-BR");
       }
 
-      // Add to localStorage cache
-      addToCache(username, data.language || language, data.shame);
+      // Add to localStorage cache with model information - only if caching is enabled
+      if (isCacheEnabled) {
+        addToCache(
+          username,
+          data.language || language,
+          data.shame,
+          data.model || currentModel
+        );
+      }
 
       // Track with info about which cache was used
       if (typeof window !== "undefined" && window.gtag) {
@@ -130,6 +145,8 @@ export default function Home() {
           event_label: username,
           username: username,
           from_cache: data.fromCache ? "database" : "none",
+          model: data.model || currentModel,
+          cache_enabled: isCacheEnabled,
         });
       }
     } catch (err) {
@@ -139,8 +156,12 @@ export default function Home() {
     }
   };
 
-  // Function to check cache
-  const checkCache = (username: string, language: string): string | null => {
+  // Function to check cache - now includes model check
+  const checkCache = (
+    username: string,
+    language: string,
+    model: string
+  ): string | null => {
     try {
       const cacheKey = `github-shame-cache`;
       const cacheData = localStorage.getItem(cacheKey);
@@ -151,11 +172,12 @@ export default function Home() {
       const now = Date.now();
       const ONE_DAY = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
-      // Find matching entry that's less than 24 hours old
+      // Find matching entry that's less than 24 hours old and matches the model
       const entry = cache.find(
         (entry) =>
           entry.username.toLowerCase() === username.toLowerCase() &&
           entry.language === language &&
+          entry.model === model &&
           now - entry.timestamp < ONE_DAY
       );
 
@@ -167,11 +189,12 @@ export default function Home() {
     }
   };
 
-  // Function to add to cache
+  // Function to add to cache - now stores model info
   const addToCache = (
     username: string,
     language: "en-US" | "pt-BR",
-    result: string
+    result: string,
+    model: string
   ) => {
     try {
       const cacheKey = `github-shame-cache`;
@@ -181,22 +204,24 @@ export default function Home() {
       if (cacheData) {
         cache = JSON.parse(cacheData);
 
-        // Remove any existing entries for this username & language
+        // Remove any existing entries for this username, language, and model
         cache = cache.filter(
           (entry) =>
             !(
               entry.username.toLowerCase() === username.toLowerCase() &&
-              entry.language === language
+              entry.language === language &&
+              entry.model === model
             )
         );
       }
 
-      // Add new entry
+      // Add new entry with model information
       cache.push({
         username,
         language,
         timestamp: Date.now(),
         result,
+        model,
       });
 
       // Limit cache size (optional, keeps last 50 entries)
