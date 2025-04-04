@@ -53,7 +53,6 @@ export default function Home() {
   const [isClient, setIsClient] = useState(false);
   const [isCacheEnabled, setIsCacheEnabled] = useState(true);
   const [currentModel, setCurrentModel] = useState("gpt-3.5-turbo");
-  const useStreaming = true;
 
   // Mark when client-side rendering is complete and get environment variables
   useEffect(() => {
@@ -75,8 +74,8 @@ export default function Home() {
     setError("");
     setShameResult("");
 
-    // Check localStorage cache first - only if caching is enabled and not streaming
-    if (isCacheEnabled && !useStreaming) {
+    // Check localStorage cache first - only if caching is enabled
+    if (isCacheEnabled) {
       const cachedResult = checkCache(username, language, currentModel);
       if (cachedResult) {
         setShameResult(cachedResult);
@@ -102,28 +101,30 @@ export default function Home() {
       // Use the combined endpoint for all requests
       const apiRoute = "/api/shame";
 
-      if (useStreaming) {
-        // Handle streaming response
-        const response = await fetch(
-          `${apiRoute}?username=${encodeURIComponent(
-            username
-          )}&lang=${language}&stream=true`
-        );
+      // Always use streaming for uncached requests
+      const response = await fetch(
+        `${apiRoute}?username=${encodeURIComponent(username)}&lang=${language}`
+      );
 
-        if (!response.ok) {
-          if (response.status === 429) {
-            const data = await response.json();
-            setError(
-              `${data.error} ${t.errors.rateLimitExceeded} ${data.resetInSeconds} ${t.errors.seconds}.`
-            );
-          } else {
-            const errorData = await response.json();
-            throw new Error(errorData.error || response.statusText);
-          }
-          setLoading(false);
-          return;
+      if (!response.ok) {
+        if (response.status === 429) {
+          const data = await response.json();
+          setError(
+            `${data.error} ${t.errors.rateLimitExceeded} ${data.resetInSeconds} ${t.errors.seconds}.`
+          );
+        } else {
+          const errorData = await response.json();
+          throw new Error(errorData.error || response.statusText);
         }
+        setLoading(false);
+        return;
+      }
 
+      // Check if the response is a stream or JSON
+      const contentType = response.headers.get("Content-Type") || "";
+
+      if (contentType.includes("text/event-stream")) {
+        // Handle streaming response
         const reader = response.body?.getReader();
         if (!reader) {
           throw new Error("Response body is not readable");
@@ -166,28 +167,7 @@ export default function Home() {
           addToCache(username, language, shameResult, currentModel);
         }
       } else {
-        // Handle regular response (non-streaming)
-        const response = await fetch(
-          `${apiRoute}?username=${encodeURIComponent(
-            username
-          )}&lang=${language}`
-        );
-
-        if (response.status === 429) {
-          // Handle rate limiting
-          const data = await response.json();
-          setError(
-            `${data.error} ${t.errors.rateLimitExceeded} ${data.resetInSeconds} ${t.errors.seconds}.`
-          );
-          setLoading(false);
-          return;
-        }
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || response.statusText);
-        }
-
+        // Handle regular JSON response (from cache)
         const data = await response.json();
         setShameResult(data.shame);
 

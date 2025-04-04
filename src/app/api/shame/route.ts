@@ -40,9 +40,6 @@ export async function GET(request: Request) {
   const queryLang = searchParams.get("lang");
   const acceptLanguage = headersList.get("accept-language") || "";
 
-  // Check if streaming is requested
-  const shouldStream = searchParams.get("stream") === "true";
-
   // Prioritize the language parameter if provided
   const preferredLanguage =
     queryLang === "pt-BR"
@@ -90,23 +87,21 @@ export async function GET(request: Request) {
   try {
     let cachedShame = null;
 
-    // Check cache first before making external API calls, but only return it if caching is enabled
-    if (!shouldStream) {
-      cachedShame = await shameCacheController.get(
-        username,
-        preferredLanguage,
-        modelToUse
-      );
+    // Check cache first before making external API calls
+    cachedShame = await shameCacheController.get(
+      username,
+      preferredLanguage,
+      modelToUse
+    );
 
-      // Only use cached results if caching is enabled
-      if (cachedShame && isCacheEnabled) {
-        return NextResponse.json({
-          shame: cachedShame.shame_text,
-          language: cachedShame.language,
-          fromCache: true,
-          model: cachedShame.llm_model || modelToUse,
-        });
-      }
+    // Use cached results if available and caching is enabled
+    if (cachedShame && isCacheEnabled) {
+      return NextResponse.json({
+        shame: cachedShame.shame_text,
+        language: cachedShame.language,
+        fromCache: true,
+        model: cachedShame.llm_model || modelToUse,
+      });
     }
 
     // Fetch GitHub user data
@@ -167,7 +162,9 @@ export async function GET(request: Request) {
       },
     ];
 
-    // If streaming is requested, return streaming response
+    // Set shouldStream to true by default when no cache is available
+    const shouldStream = true;
+
     if (shouldStream) {
       if (modelToUse === "deepseek") {
         const { textStream } = streamText({
@@ -278,7 +275,8 @@ export async function GET(request: Request) {
       }
     }
 
-    // Non-streaming flow
+    // This part should never be reached with the new logic
+    // but keep as fallback
     let shameText = "";
 
     // Generate shame with the model specified in environment variable
