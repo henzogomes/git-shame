@@ -1,4 +1,5 @@
 import React from "react";
+import ReactMarkdown from "react-markdown";
 
 interface RoastResultProps {
   loading: boolean;
@@ -29,11 +30,13 @@ const RoastResult: React.FC<RoastResultProps> = ({
       {/* Show error message if exists */}
       {error && <div className={errorStyles}>{error}</div>}
 
-      {/* Show roast result if exists */}
+      {/* Show roast result if exists, now with markdown parsing */}
       {shameResult && (
         <div className={resultStyles}>
           <h2 className={titleStyles}>{title}</h2>
-          <p className="whitespace-pre-line">{shameResult}</p>
+          <div className="markdown-content">
+            <ReactMarkdown>{shameResult}</ReactMarkdown>
+          </div>
         </div>
       )}
 
