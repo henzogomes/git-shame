@@ -41,6 +41,45 @@ function getInitialLanguage(): "en-US" | "pt-BR" {
   return "en-US"; // Default fallback
 }
 
+// Add this function to simulate streaming text
+const simulateStreamingText = async (
+  text: string,
+  onUpdate: (text: string) => void
+) => {
+  // Start with empty text
+  let currentText = "";
+  onUpdate("");
+
+  // Calculate chunk size and delay (adjust these for desired speed)
+  const minChunkSize = 1;
+  const maxChunkSize = 5;
+  const minDelay = 10; // milliseconds
+  const maxDelay = 40; // milliseconds
+
+  // Break text into words
+  const words = text.split(/(\s+)/);
+
+  for (let i = 0; i < words.length; i++) {
+    // Determine random chunk size (how many words to add at once)
+    const chunkSize =
+      Math.floor(Math.random() * (maxChunkSize - minChunkSize + 1)) +
+      minChunkSize;
+    const chunk = words.slice(i, i + chunkSize).join("");
+    i += chunkSize - 1;
+
+    // Add chunk to current text
+    currentText += chunk;
+    onUpdate(currentText);
+
+    // Random delay between chunks to simulate typing
+    const delay =
+      Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+
+  return text;
+};
+
 export default function Home() {
   // Use the getInitialLanguage function for initial state
   const [username, setUsername] = useState("");
@@ -78,7 +117,8 @@ export default function Home() {
     if (isCacheEnabled) {
       const cachedResult = checkCache(username, language, currentModel);
       if (cachedResult) {
-        setShameResult(cachedResult);
+        // Simulate streaming for cached content instead of immediate display
+        await simulateStreamingText(cachedResult, setShameResult);
         setLoading(false);
 
         // Track the form submission event with cache info
@@ -169,7 +209,9 @@ export default function Home() {
       } else {
         // Handle regular JSON response (from cache)
         const data = await response.json();
-        setShameResult(data.shame);
+
+        // Simulate streaming for database cached content too
+        await simulateStreamingText(data.shame, setShameResult);
 
         // Update language if the API detected a different language
         if (data.language) {
