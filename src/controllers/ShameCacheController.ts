@@ -6,6 +6,7 @@ export interface ShameCache {
   shame_text: string;
   language: string;
   llm_model?: string;
+  avatar_url?: string; // Add avatar URL field
   created_at?: Date;
   last_access?: Date;
 }
@@ -62,20 +63,30 @@ export class ShameCacheController {
    * Updates an existing shame cache entry
    * @param id The ID of the entry to update
    * @param shame_text The new shame text
+   * @param avatar_url Optional avatar URL
    * @returns The updated shame cache entry
    */
-  async update(id: number, shame_text: string): Promise<ShameCache> {
+  async update(
+    id: number,
+    shame_text: string,
+    avatar_url?: string
+  ): Promise<ShameCache> {
     try {
       const updateQuery = `
         UPDATE shame_cache
         SET shame_text = $1,
             last_access = NOW(),
             created_at = NOW()
+            ${avatar_url ? ", avatar_url = $3" : ""}
         WHERE id = $2
         RETURNING *
       `;
 
-      const updateResult = await client.query(updateQuery, [shame_text, id]);
+      const params = avatar_url
+        ? [shame_text, id, avatar_url]
+        : [shame_text, id];
+
+      const updateResult = await client.query(updateQuery, params);
 
       if (updateResult.rows.length === 0) {
         throw new Error(`No shame cache entry found with ID ${id}`);
@@ -96,8 +107,8 @@ export class ShameCacheController {
   async insert(entry: ShameCache): Promise<ShameCache> {
     try {
       const insertQuery = `
-        INSERT INTO shame_cache (username, shame_text, language, llm_model)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO shame_cache (username, shame_text, language, llm_model, avatar_url)
+        VALUES ($1, $2, $3, $4, $5)
         RETURNING *
       `;
 
@@ -106,6 +117,7 @@ export class ShameCacheController {
         entry.shame_text,
         entry.language,
         entry.llm_model || "gpt-3.5-turbo",
+        entry.avatar_url || null,
       ]);
 
       return insertResult.rows[0];
@@ -138,7 +150,11 @@ export class ShameCacheController {
 
       if (existingResult.rows.length > 0) {
         // Update existing entry using the dedicated update method
-        return this.update(existingResult.rows[0].id, entry.shame_text);
+        return this.update(
+          existingResult.rows[0].id,
+          entry.shame_text,
+          entry.avatar_url
+        );
       } else {
         // Insert new entry using the dedicated insert method
         return this.insert(entry);
@@ -162,10 +178,49 @@ export class ShameCacheController {
       `;
 
       const result = await client.query(query);
-      return result.rowCount || 0;
+      // Fix: Use a definite number (0) if rowCount is null or undefined
+      return result.rowCount ?? 0;
     } catch (error) {
       console.error("Error cleaning up old cache entries:", error);
       return 0;
+    }
+  }
+
+  /**
+   * Updates only the avatar URL of an existing cache entry
+   * @param username The GitHub username
+   * @param language The language code
+   * @param model The LLM model
+   * @param avatarUrl The avatar URL to set
+   * @returns Whether the update was successful
+   */
+  async updateAvatarUrl(
+    username: string,
+    language: string,
+    model: string,
+    avatarUrl: string
+  ): Promise<boolean> {
+    try {
+      const query = `
+        UPDATE shame_cache
+        SET avatar_url = $1
+        WHERE username = $2
+        AND language = $3
+        AND llm_model = $4
+        RETURNING id
+      `;
+
+      const result = await client.query(query, [
+        avatarUrl,
+        username.toLowerCase(),
+        language,
+        model,
+      ]);
+
+      return (result.rowCount ?? 0) > 0;
+    } catch (error) {
+      console.error("Error updating avatar URL:", error);
+      return false;
     }
   }
 }

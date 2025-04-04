@@ -93,11 +93,39 @@ export async function GET(request: Request) {
 
     // Use cached results if available and caching is enabled
     if (cachedShame && isCacheEnabled) {
+      // If we have a cached result but no avatar URL, fetch it from GitHub and update the cache
+      if (!cachedShame.avatar_url) {
+        try {
+          // Fetch just the user data to get the avatar URL
+          const userResponse = await axios.get(
+            `https://api.github.com/users/${username}`
+          );
+          const userData = userResponse.data;
+          const avatarUrl = userData.avatar_url;
+
+          // Update the cache with the avatar URL
+          if (avatarUrl && cachedShame.id) {
+            await shameCacheController.update(
+              cachedShame.id,
+              cachedShame.shame_text,
+              avatarUrl
+            );
+
+            // Update our response with the avatar URL
+            cachedShame.avatar_url = avatarUrl;
+          }
+        } catch (error) {
+          // If we can't fetch the avatar, just continue with the cached data
+          console.error("Failed to fetch missing avatar URL:", error);
+        }
+      }
+
       return NextResponse.json({
         shame: cachedShame.shame_text,
         language: cachedShame.language,
         fromCache: true,
         model: cachedShame.llm_model || modelToUse,
+        avatarUrl: cachedShame.avatar_url || null,
       });
     }
 
@@ -106,6 +134,7 @@ export async function GET(request: Request) {
       `https://api.github.com/users/${username}`
     );
     const userData = githubResponse.data;
+    const avatarUrl = userData.avatar_url;
 
     // Also fetch user's repositories to have more information to mock
     const reposResponse = await axios.get(
@@ -176,18 +205,25 @@ export async function GET(request: Request) {
                   fullStreamText += delta; // Collect the full text
                   controller.enqueue(
                     encoder.encode(
-                      `data: ${JSON.stringify({ text: delta })}\n\n`
+                      `data: ${JSON.stringify({
+                        text: delta,
+                        // Send avatar URL with first chunk
+                        ...(fullStreamText.length === delta.length
+                          ? { avatarUrl }
+                          : {}),
+                      })}\n\n`
                     )
                   );
                 }
 
-                // Save to cache after the stream is complete
+                // Save to cache after the stream is complete with avatar URL
                 await shameCacheController
                   .cacheUser({
                     username: username,
                     shame_text: fullStreamText,
                     language: preferredLanguage,
                     llm_model: modelToUse,
+                    avatar_url: avatarUrl,
                   })
                   .catch((err) =>
                     console.error("Failed to save to cache:", err)
@@ -229,18 +265,25 @@ export async function GET(request: Request) {
                   fullStreamText += delta; // Collect the full text
                   controller.enqueue(
                     encoder.encode(
-                      `data: ${JSON.stringify({ text: delta })}\n\n`
+                      `data: ${JSON.stringify({
+                        text: delta,
+                        // Send avatar URL with first chunk
+                        ...(fullStreamText.length === delta.length
+                          ? { avatarUrl }
+                          : {}),
+                      })}\n\n`
                     )
                   );
                 }
 
-                // Save to cache after the stream is complete
+                // Save to cache after the stream is complete with avatar URL
                 await shameCacheController
                   .cacheUser({
                     username: username,
                     shame_text: fullStreamText,
                     language: preferredLanguage,
                     llm_model: modelToUse,
+                    avatar_url: avatarUrl,
                   })
                   .catch((err) =>
                     console.error("Failed to save to cache:", err)
@@ -316,6 +359,7 @@ export async function GET(request: Request) {
       shame_text: finalShameText,
       language: preferredLanguage,
       llm_model: modelToUse,
+      avatar_url: avatarUrl,
     });
 
     return NextResponse.json({
@@ -323,6 +367,7 @@ export async function GET(request: Request) {
       language: preferredLanguage,
       fromCache: false,
       model: modelToUse,
+      avatarUrl: avatarUrl,
     });
   } catch (error) {
     console.error("Error:", error);
