@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import axios from "axios";
-import OpenAI from "openai";
+import { createOpenAI } from "@ai-sdk/openai";
 import { createDeepSeek } from "@ai-sdk/deepseek";
 import { generateText } from "ai";
 import { headers } from "next/headers";
@@ -8,9 +8,9 @@ import { isRateLimited, getRateLimitReset } from "@/lib/rate-limiter";
 import { shameCacheController } from "@/controllers/ShameCacheController";
 import { GitHubRepo, GitHubProfile } from "@/types/types";
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_KEY,
+// Initialize OpenAI client with Vercel AI SDK
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_KEY || "",
 });
 
 // Initialize DeepSeek client
@@ -166,9 +166,9 @@ export async function GET(request: Request) {
 
       shameText = text || "";
     } else {
-      // Default to OpenAI ChatGPT
-      const completion = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
+      // Default to OpenAI ChatGPT using Vercel AI SDK
+      const { text } = await generateText({
+        model: openai("gpt-3.5-turbo"),
         messages: [
           {
             role: "system",
@@ -181,10 +181,11 @@ export async function GET(request: Request) {
             )}`,
           },
         ],
-        max_tokens: 500,
+        temperature: 0.7,
+        maxTokens: 500,
       });
 
-      shameText = completion.choices[0]?.message.content || "";
+      shameText = text || "";
     }
 
     // Use fallback text if the response is empty
