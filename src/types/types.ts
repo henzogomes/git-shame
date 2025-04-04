@@ -37,10 +37,11 @@ export interface GitHubProfile {
 // Cache entry interface
 export interface CacheEntry {
   username: string;
-  timestamp: number; // Unix timestamp in milliseconds
   language: "en-US" | "pt-BR";
+  timestamp: number; // Unix timestamp in milliseconds
   result: string;
   model: string;
+  avatarUrl?: string | null;
 }
 
 // Add empty export to make it a module

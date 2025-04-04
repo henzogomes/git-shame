@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import RoastResult from "@/components/RoastResult";
-import { checkCache, addToCache } from "@/utils/cacheUtils";
+import { checkCache, addToCache, removeFromCache } from "@/utils/cacheUtils";
 import {
   simulateStreamingText,
   handleSSEStream,
@@ -20,6 +20,7 @@ export default function Home() {
   const [isClient, setIsClient] = useState(false);
   const [isCacheEnabled, setIsCacheEnabled] = useState(true);
   const [currentModel, setCurrentModel] = useState("gpt-3.5-turbo");
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
   // Mark when client-side rendering is complete and get environment variables
   useEffect(() => {
@@ -40,13 +41,29 @@ export default function Home() {
     setLoading(true);
     setError("");
     setShameResult("");
+    setAvatarUrl(null);
 
     // Check localStorage cache first - only if caching is enabled
     if (isCacheEnabled) {
-      const cachedResult = checkCache(username, language, currentModel);
-      if (cachedResult) {
+      const cachedData = checkCache(username, language, currentModel);
+
+      // If we have a cached entry but no avatar URL, delete it from local cache
+      // This will force it to use the database cache on the next request
+      if (cachedData && cachedData.result && !cachedData.avatarUrl) {
+        console.log(
+          "Local cache entry has no avatar, removing to use database cache instead"
+        );
+        removeFromCache(username, language, currentModel);
+
+        // Proceed with API call which will check database cache
+      }
+      // If we have a complete cache entry with avatar, use it
+      else if (cachedData && cachedData.result && cachedData.avatarUrl) {
+        // Set avatar URL from cache
+        setAvatarUrl(cachedData.avatarUrl);
+
         // Simulate streaming for cached content instead of immediate display
-        await simulateStreamingText(cachedResult, setShameResult);
+        await simulateStreamingText(cachedData.result, setShameResult);
         setLoading(false);
 
         // Track the form submission event with cache info
@@ -63,6 +80,9 @@ export default function Home() {
 
         return; // Stop further processing if result is from localStorage
       }
+
+      // If we reach here, either there was no cache entry or we deleted an incomplete one
+      // Continue with API call to database
     }
 
     try {
@@ -93,15 +113,34 @@ export default function Home() {
 
       if (contentType.includes("text/event-stream")) {
         // Handle streaming response
-        const shameResult = await handleSSEStream(response, setShameResult);
+        const { text: shameResult, avatarUrl: streamAvatarUrl } =
+          await handleSSEStream(response, (chunk) => {
+            setShameResult((prev) => prev + chunk.text);
+
+            // Check if avatar URL is in the chunk (first chunk)
+            if (chunk.avatarUrl) {
+              setAvatarUrl(chunk.avatarUrl);
+            }
+          });
 
         // If caching is enabled, add the final result to the cache
         if (isCacheEnabled && shameResult) {
-          addToCache(username, language, shameResult, currentModel);
+          addToCache(
+            username,
+            language,
+            shameResult,
+            currentModel,
+            streamAvatarUrl || avatarUrl
+          );
         }
       } else {
         // Handle regular JSON response (from cache)
         const data = await response.json();
+
+        // Set avatar URL if available
+        if (data.avatarUrl) {
+          setAvatarUrl(data.avatarUrl);
+        }
 
         // Simulate streaming for database cached content too
         await simulateStreamingText(data.shame, setShameResult);
@@ -111,13 +150,14 @@ export default function Home() {
           setLanguage(data.language as Language);
         }
 
-        // Add to localStorage cache with model information - only if caching is enabled
+        // Add to localStorage cache with model information and avatar URL
         if (isCacheEnabled) {
           addToCache(
             username,
             data.language || language,
             data.shame,
-            data.model || currentModel
+            data.model || currentModel,
+            data.avatarUrl
           );
         }
 
@@ -180,6 +220,8 @@ export default function Home() {
           error={error}
           shameResult={shameResult}
           title={t.shameReportTitle}
+          avatarUrl={avatarUrl}
+          username={username}
         />
       </main>
     </div>

@@ -1,11 +1,14 @@
 import React from "react";
 import ReactMarkdown from "react-markdown";
+import Image from "next/image";
 
 interface RoastResultProps {
   loading: boolean;
   error: string;
   shameResult: string;
   title: string;
+  avatarUrl?: string | null;
+  username?: string;
   errorStyles?: string;
   resultStyles?: string;
   titleStyles?: string;
@@ -16,6 +19,8 @@ const RoastResult: React.FC<RoastResultProps> = ({
   error,
   shameResult,
   title,
+  avatarUrl,
+  username,
   errorStyles = "mt-6 p-4 bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-100 rounded-md",
   resultStyles = "mt-6 p-4 bg-gray-100 dark:bg-gray-800 rounded-md",
   titleStyles = "text-lg font-semibold mb-2",
@@ -30,10 +35,23 @@ const RoastResult: React.FC<RoastResultProps> = ({
       {/* Show error message if exists */}
       {error && <div className={errorStyles}>{error}</div>}
 
-      {/* Show roast result if exists, now with markdown parsing */}
+      {/* Show roast result if exists, now with markdown parsing and avatar */}
       {shameResult && (
         <div className={resultStyles}>
-          <h2 className={titleStyles}>{title}</h2>
+          <div className="flex items-center mb-4">
+            {avatarUrl && (
+              <div className="mr-4 flex-shrink-0">
+                <Image
+                  src={avatarUrl}
+                  alt={`GitHub avatar for ${username || "user"}`}
+                  width={64}
+                  height={64}
+                  className="rounded-full"
+                />
+              </div>
+            )}
+            <h2 className={titleStyles}>{title}</h2>
+          </div>
           <div className="markdown-content">
             <ReactMarkdown>{shameResult}</ReactMarkdown>
           </div>

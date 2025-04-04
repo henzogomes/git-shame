@@ -44,50 +44,51 @@ export const simulateStreamingText = async (
  */
 export const handleSSEStream = async (
   response: Response,
-  onUpdate: (text: string) => void
-) => {
+  onChunk: (chunk: { text: string; avatarUrl?: string }) => void
+): Promise<{ text: string; avatarUrl?: string }> => {
   const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error("Response body is not readable");
-  }
-
-  let fullText = "";
   const decoder = new TextDecoder();
+  let fullText = "";
+  let avatarUrl: string | undefined;
+
+  if (!reader) {
+    throw new Error("Response body is null");
+  }
 
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      const text = decoder.decode(value, { stream: true });
-      const lines = text.split("\n\n");
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split("\n\n");
 
       for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const data = line.substring(6);
-          if (data === "[DONE]") {
-            // Stream completed
-            break;
-          }
-
+        if (line.startsWith("data: ") && line !== "data: [DONE]") {
           try {
-            const parsed = JSON.parse(data);
-            if (parsed.text) {
-              fullText += parsed.text;
-              onUpdate(fullText);
+            const jsonData = JSON.parse(line.substring(6));
+
+            if (jsonData.text) {
+              fullText += jsonData.text;
+
+              // If this chunk contains the avatar URL
+              if (jsonData.avatarUrl) {
+                avatarUrl = jsonData.avatarUrl;
+              }
+
+              onChunk(jsonData);
             }
-          } catch (e) {
-            console.log(e);
-            // Ignore parse errors for incomplete chunks
+          } catch (error) {
+            console.error("Error parsing SSE data:", error);
           }
         }
       }
     }
+
+    return { text: fullText, avatarUrl };
   } finally {
     reader.releaseLock();
   }
-
-  return fullText;
 };
 
 /**

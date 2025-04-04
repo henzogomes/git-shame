@@ -7,12 +7,12 @@ export const checkCache = (
   username: string,
   language: string,
   model: string
-): string | null => {
+): { result: string | null; avatarUrl: string | null } => {
   try {
     const cacheKey = `github-shame-cache`;
     const cacheData = localStorage.getItem(cacheKey);
 
-    if (!cacheData) return null;
+    if (!cacheData) return { result: null, avatarUrl: null };
 
     const cache: CacheEntry[] = JSON.parse(cacheData);
     const now = Date.now();
@@ -27,11 +27,14 @@ export const checkCache = (
         now - entry.timestamp < ONE_DAY
     );
 
-    return entry ? entry.result : null;
+    return {
+      result: entry ? entry.result : null,
+      avatarUrl: entry?.avatarUrl || null,
+    };
   } catch (error) {
     // If there's an error reading cache, just proceed with API call
     console.error("Cache error:", error);
-    return null;
+    return { result: null, avatarUrl: null };
   }
 };
 
@@ -42,7 +45,8 @@ export const addToCache = (
   username: string,
   language: "en-US" | "pt-BR",
   result: string,
-  model: string
+  model: string,
+  avatarUrl?: string | null
 ) => {
   try {
     const cacheKey = `github-shame-cache`;
@@ -63,13 +67,14 @@ export const addToCache = (
       );
     }
 
-    // Add new entry with model information
+    // Add new entry with model information and avatar URL
     cache.push({
       username,
       language,
       timestamp: Date.now(),
       result,
       model,
+      avatarUrl: avatarUrl || null,
     });
 
     // Limit cache size (optional, keeps last 50 entries)
@@ -81,5 +86,88 @@ export const addToCache = (
   } catch (error) {
     console.error("Error adding to cache:", error);
     // Continue even if caching fails
+  }
+};
+
+/**
+ * Updates just the avatar URL in the localStorage cache
+ */
+export const updateAvatarUrlInCache = (
+  username: string,
+  language: string,
+  model: string,
+  avatarUrl: string
+): boolean => {
+  try {
+    const cacheKey = `github-shame-cache`;
+    const cacheData = localStorage.getItem(cacheKey);
+
+    if (!cacheData) return false;
+
+    const cache: CacheEntry[] = JSON.parse(cacheData);
+    let updated = false;
+
+    // Find the entry to update
+    for (let i = 0; i < cache.length; i++) {
+      const entry = cache[i];
+      if (
+        entry.username.toLowerCase() === username.toLowerCase() &&
+        entry.language === language &&
+        entry.model === model
+      ) {
+        cache[i].avatarUrl = avatarUrl;
+        updated = true;
+        break;
+      }
+    }
+
+    if (updated) {
+      localStorage.setItem(cacheKey, JSON.stringify(cache));
+    }
+
+    return updated;
+  } catch (error) {
+    console.error("Error updating avatar URL in cache:", error);
+    return false;
+  }
+};
+
+/**
+ * Removes an entry from the localStorage cache
+ */
+export const removeFromCache = (
+  username: string,
+  language: string,
+  model: string
+): boolean => {
+  try {
+    const cacheKey = `github-shame-cache`;
+    const cacheData = localStorage.getItem(cacheKey);
+
+    if (!cacheData) return false;
+
+    const cache: CacheEntry[] = JSON.parse(cacheData);
+    const initialLength = cache.length;
+
+    // Filter out the entry to remove
+    const newCache = cache.filter(
+      (entry) =>
+        !(
+          entry.username.toLowerCase() === username.toLowerCase() &&
+          entry.language === language &&
+          entry.model === model
+        )
+    );
+
+    // If the length changed, we removed something
+    if (newCache.length !== initialLength) {
+      localStorage.setItem(cacheKey, JSON.stringify(newCache));
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    console.error("Error removing from cache:", error);
+    return false;
   }
 };
