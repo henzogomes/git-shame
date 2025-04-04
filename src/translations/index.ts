@@ -47,7 +47,7 @@ const translations: Record<Language, TranslationStrings> = {
     },
   },
   "pt-BR": {
-    title: "fritar meu github",
+    title: "fritador de github",
     placeholder: "Digite o nome de usuário do GitHub",
     button: "Fritar! 🔥",
     loading: "Preparando a fritura... 🍳",
