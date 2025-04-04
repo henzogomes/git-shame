@@ -23,7 +23,9 @@ const deepseek = createDeepSeek({
 const isCacheEnabled = process.env.NEXT_PUBLIC_CACHE !== "false";
 
 // Get the model to use from environment variable
-const modelToUse = (process.env.NEXT_PUBLIC_LLM || "chatgpt").toLowerCase();
+const modelToUse = (
+  process.env.NEXT_PUBLIC_LLM || "gpt-3.5-turbo"
+).toLowerCase();
 
 export async function GET(request: Request) {
   // Get client IP for rate limiting
@@ -86,19 +88,23 @@ export async function GET(request: Request) {
   }
 
   try {
-    // Check cache first before making external API calls (only if caching is enabled)
-    if (isCacheEnabled && !shouldStream) {
-      const cachedShame = await shameCacheController.get(
+    let cachedShame = null;
+
+    // Check cache first before making external API calls, but only return it if caching is enabled
+    if (!shouldStream) {
+      cachedShame = await shameCacheController.get(
         username,
-        preferredLanguage
+        preferredLanguage,
+        modelToUse
       );
 
-      if (cachedShame) {
+      // Only use cached results if caching is enabled
+      if (cachedShame && isCacheEnabled) {
         return NextResponse.json({
           shame: cachedShame.shame_text,
           language: cachedShame.language,
           fromCache: true,
-          model: modelToUse,
+          model: cachedShame.llm_model || modelToUse,
         });
       }
     }
@@ -171,18 +177,35 @@ export async function GET(request: Request) {
           maxTokens: 500,
         });
 
+        // Create a variable to collect the full text for saving to cache
+        let fullStreamText = "";
+
         return new Response(
           new ReadableStream({
             async start(controller) {
               try {
                 const encoder = new TextEncoder();
                 for await (const delta of textStream) {
+                  fullStreamText += delta; // Collect the full text
                   controller.enqueue(
                     encoder.encode(
                       `data: ${JSON.stringify({ text: delta })}\n\n`
                     )
                   );
                 }
+
+                // Save to cache after the stream is complete
+                await shameCacheController
+                  .cacheUser({
+                    username: username,
+                    shame_text: fullStreamText,
+                    language: preferredLanguage,
+                    llm_model: modelToUse,
+                  })
+                  .catch((err) =>
+                    console.error("Failed to save to cache:", err)
+                  );
+
                 controller.enqueue(encoder.encode("data: [DONE]\n\n"));
                 controller.close();
               } catch (error) {
@@ -207,18 +230,35 @@ export async function GET(request: Request) {
           maxTokens: 500,
         });
 
+        // Create a variable to collect the full text for saving to cache
+        let fullStreamText = "";
+
         return new Response(
           new ReadableStream({
             async start(controller) {
               try {
                 const encoder = new TextEncoder();
                 for await (const delta of textStream) {
+                  fullStreamText += delta; // Collect the full text
                   controller.enqueue(
                     encoder.encode(
                       `data: ${JSON.stringify({ text: delta })}\n\n`
                     )
                   );
                 }
+
+                // Save to cache after the stream is complete
+                await shameCacheController
+                  .cacheUser({
+                    username: username,
+                    shame_text: fullStreamText,
+                    language: preferredLanguage,
+                    llm_model: modelToUse,
+                  })
+                  .catch((err) =>
+                    console.error("Failed to save to cache:", err)
+                  );
+
                 controller.enqueue(encoder.encode("data: [DONE]\n\n"));
                 controller.close();
               } catch (error) {
@@ -259,7 +299,7 @@ export async function GET(request: Request) {
         }
         shameText = fullText;
       } else {
-        // Default to OpenAI ChatGPT using Vercel AI SDK
+        // Default to OpenAI gpt-3.5-turbo using Vercel AI SDK
         const stream = streamText({
           model: openai("gpt-3.5-turbo"),
           messages,
@@ -286,14 +326,13 @@ export async function GET(request: Request) {
         ? "Hmm, não consegui pensar em algo inteligente para dizer. Este perfil do GitHub é entediante demais para zoar."
         : "Hmm, I couldn't think of anything clever to say. This GitHub profile is too boring to roast.");
 
-    // Store the result in cache (only if caching is enabled)
-    if (isCacheEnabled) {
-      await shameCacheController.create({
-        username: username,
-        shame_text: finalShameText,
-        language: preferredLanguage,
-      });
-    }
+    // Always store the result in cache regardless of cache setting
+    await shameCacheController.cacheUser({
+      username: username,
+      shame_text: finalShameText,
+      language: preferredLanguage,
+      llm_model: modelToUse,
+    });
 
     return NextResponse.json({
       shame: finalShameText,

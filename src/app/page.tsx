@@ -52,7 +52,7 @@ export default function Home() {
   );
   const [isClient, setIsClient] = useState(false);
   const [isCacheEnabled, setIsCacheEnabled] = useState(true);
-  const [currentModel, setCurrentModel] = useState("chatgpt");
+  const [currentModel, setCurrentModel] = useState("gpt-3.5-turbo");
   const useStreaming = true;
 
   // Mark when client-side rendering is complete and get environment variables
@@ -63,7 +63,7 @@ export default function Home() {
     setIsCacheEnabled(process.env.NEXT_PUBLIC_CACHE !== "false");
 
     // Get current model from environment
-    setCurrentModel(process.env.NEXT_PUBLIC_LLM || "chatgpt");
+    setCurrentModel(process.env.NEXT_PUBLIC_LLM || "gpt-3.5-turbo");
   }, []);
 
   // Get the translations after ensuring we have the correct language
