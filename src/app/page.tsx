@@ -1,84 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { CacheEntry } from "@/types/types";
-
-// Translations
-const translations = {
-  "en-US": {
-    title: "roast my github",
-    placeholder: "Enter GitHub username",
-    button: "Roast Them!",
-    loading: "Roasting...",
-    shameReportTitle: "The Roast Report:",
-    errors: {
-      rateLimitExceeded: "Rate limit exceeded. Try again in",
-      seconds: "seconds",
-      userNotFound: "GitHub user not found",
-      failedToProcess: "Failed to roast GitHub user",
-    },
-  },
-  "pt-BR": {
-    title: "zoar meu github",
-    placeholder: "Digite o nome de usuário do GitHub",
-    button: "Zoar!",
-    loading: "Preparando a zoeira...",
-    shameReportTitle: "O Relatório da Vergonha:",
-    errors: {
-      rateLimitExceeded: "Limite de requisições excedido. Tente novamente em",
-      seconds: "segundos",
-      userNotFound: "Usuário do GitHub não encontrado",
-      failedToProcess: "Falha ao zoar usuário do GitHub",
-    },
-  },
-};
-
-// Detect language from window object when available
-function getInitialLanguage(): "en-US" | "pt-BR" {
-  if (typeof window !== "undefined") {
-    return window.navigator.language.startsWith("pt") ? "pt-BR" : "en-US";
-  }
-  return "en-US"; // Default fallback
-}
-
-// Add this function to simulate streaming text
-const simulateStreamingText = async (
-  text: string,
-  onUpdate: (text: string) => void
-) => {
-  // Start with empty text
-  let currentText = "";
-  onUpdate("");
-
-  // Calculate chunk size and delay (adjust these for desired speed)
-  const minChunkSize = 1;
-  const maxChunkSize = 5;
-  const minDelay = 10; // milliseconds
-  const maxDelay = 40; // milliseconds
-
-  // Break text into words
-  const words = text.split(/(\s+)/);
-
-  for (let i = 0; i < words.length; i++) {
-    // Determine random chunk size (how many words to add at once)
-    const chunkSize =
-      Math.floor(Math.random() * (maxChunkSize - minChunkSize + 1)) +
-      minChunkSize;
-    const chunk = words.slice(i, i + chunkSize).join("");
-    i += chunkSize - 1;
-
-    // Add chunk to current text
-    currentText += chunk;
-    onUpdate(currentText);
-
-    // Random delay between chunks to simulate typing
-    const delay =
-      Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
-    await new Promise((resolve) => setTimeout(resolve, delay));
-  }
-
-  return text;
-};
+import RoastResult from "@/components/RoastResult";
+import { checkCache, addToCache } from "@/utils/cacheUtils";
+import {
+  simulateStreamingText,
+  handleSSEStream,
+  getInitialLanguage,
+} from "@/utils/streamingUtils";
+import translations, { Language } from "@/translations";
 
 export default function Home() {
   // Use the getInitialLanguage function for initial state
@@ -86,9 +16,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [shameResult, setShameResult] = useState("");
   const [error, setError] = useState("");
-  const [language, setLanguage] = useState<"en-US" | "pt-BR">(
-    getInitialLanguage
-  );
+  const [language, setLanguage] = useState<Language>(getInitialLanguage);
   const [isClient, setIsClient] = useState(false);
   const [isCacheEnabled, setIsCacheEnabled] = useState(true);
   const [currentModel, setCurrentModel] = useState("gpt-3.5-turbo");
@@ -165,42 +93,7 @@ export default function Home() {
 
       if (contentType.includes("text/event-stream")) {
         // Handle streaming response
-        const reader = response.body?.getReader();
-        if (!reader) {
-          throw new Error("Response body is not readable");
-        }
-
-        // Process the stream
-        setShameResult("");
-        const decoder = new TextDecoder();
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const text = decoder.decode(value, { stream: true });
-          const lines = text.split("\n\n");
-
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const data = line.substring(6);
-              if (data === "[DONE]") {
-                // Stream completed
-                break;
-              }
-
-              try {
-                const parsed = JSON.parse(data);
-                if (parsed.text) {
-                  setShameResult((prev) => prev + parsed.text);
-                }
-              } catch (e) {
-                console.log(e);
-                // Ignore parse errors for incomplete chunks
-              }
-            }
-          }
-        }
+        const shameResult = await handleSSEStream(response, setShameResult);
 
         // If caching is enabled, add the final result to the cache
         if (isCacheEnabled && shameResult) {
@@ -215,7 +108,7 @@ export default function Home() {
 
         // Update language if the API detected a different language
         if (data.language) {
-          setLanguage(data.language as "en-US" | "pt-BR");
+          setLanguage(data.language as Language);
         }
 
         // Add to localStorage cache with model information - only if caching is enabled
@@ -244,86 +137,6 @@ export default function Home() {
       setError(err instanceof Error ? err.message : t.errors.failedToProcess);
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Function to check cache - now includes model check
-  const checkCache = (
-    username: string,
-    language: string,
-    model: string
-  ): string | null => {
-    try {
-      const cacheKey = `github-shame-cache`;
-      const cacheData = localStorage.getItem(cacheKey);
-
-      if (!cacheData) return null;
-
-      const cache: CacheEntry[] = JSON.parse(cacheData);
-      const now = Date.now();
-      const ONE_DAY = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-
-      // Find matching entry that's less than 24 hours old and matches the model
-      const entry = cache.find(
-        (entry) =>
-          entry.username.toLowerCase() === username.toLowerCase() &&
-          entry.language === language &&
-          entry.model === model &&
-          now - entry.timestamp < ONE_DAY
-      );
-
-      return entry ? entry.result : null;
-    } catch (error) {
-      // If there's an error reading cache, just proceed with API call
-      console.error("Cache error:", error);
-      return null;
-    }
-  };
-
-  // Function to add to cache - now stores model info
-  const addToCache = (
-    username: string,
-    language: "en-US" | "pt-BR",
-    result: string,
-    model: string
-  ) => {
-    try {
-      const cacheKey = `github-shame-cache`;
-      const cacheData = localStorage.getItem(cacheKey);
-
-      let cache: CacheEntry[] = [];
-      if (cacheData) {
-        cache = JSON.parse(cacheData);
-
-        // Remove any existing entries for this username, language, and model
-        cache = cache.filter(
-          (entry) =>
-            !(
-              entry.username.toLowerCase() === username.toLowerCase() &&
-              entry.language === language &&
-              entry.model === model
-            )
-        );
-      }
-
-      // Add new entry with model information
-      cache.push({
-        username,
-        language,
-        timestamp: Date.now(),
-        result,
-        model,
-      });
-
-      // Limit cache size (optional, keeps last 50 entries)
-      if (cache.length > 50) {
-        cache = cache.slice(-50);
-      }
-
-      localStorage.setItem(cacheKey, JSON.stringify(cache));
-    } catch (error) {
-      console.error("Error adding to cache:", error);
-      // Continue even if caching fails
     }
   };
 
@@ -362,18 +175,12 @@ export default function Home() {
           </button>
         </form>
 
-        {error && (
-          <div className="mt-6 p-4 bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-100 rounded-md">
-            {error}
-          </div>
-        )}
-
-        {shameResult && (
-          <div className="mt-6 p-4 bg-gray-100 dark:bg-gray-800 rounded-md">
-            <h2 className="text-lg font-semibold mb-2">{t.shameReportTitle}</h2>
-            <p className="whitespace-pre-line">{shameResult}</p>
-          </div>
-        )}
+        <RoastResult
+          loading={loading}
+          error={error}
+          shameResult={shameResult}
+          title={t.shameReportTitle}
+        />
       </main>
     </div>
   );
