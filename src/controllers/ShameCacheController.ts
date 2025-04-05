@@ -223,6 +223,25 @@ export class ShameCacheController {
       return false;
     }
   }
+
+  /**
+   * Retrieves all cache entries, sorted by last access time
+   * @returns Array of ShameCache entries
+   */
+  async getAll(): Promise<ShameCache[]> {
+    try {
+      const query = `
+        SELECT * FROM shame_cache
+        ORDER BY last_access DESC
+      `;
+
+      const result = await client.query(query);
+      return result.rows;
+    } catch (error) {
+      console.error("Error fetching all shame cache entries:", error);
+      return [];
+    }
+  }
 }
 
 // Export a singleton instance for use throughout the application
