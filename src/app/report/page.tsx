@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { shameCacheController } from "@/controllers/ShameCacheController";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
+import ClientSideParameterCleaner from "./ClientSideParameterCleaner";
 
 interface ReportPageProps {
   searchParams: Promise<{
@@ -43,6 +44,7 @@ const ReportPage: NextPage<ReportPageProps> = async ({ searchParams }) => {
 
   return (
     <div className="container mx-auto p-4">
+      <ClientSideParameterCleaner />
       <h1 className="text-2xl font-bold mb-4">Shame Cache Report</h1>
 
       {cacheEntries.length === 0 ? (
@@ -82,23 +84,42 @@ const ReportPage: NextPage<ReportPageProps> = async ({ searchParams }) => {
                     <div className="flex flex-col items-center">
                       <div className="mb-1">
                         {entry.avatar_url ? (
-                          <Image
-                            src={entry.avatar_url}
-                            alt={entry.username}
-                            width={32}
-                            height={32}
-                            className="w-10 h-10 rounded-full"
-                          />
+                          <a
+                            href={`https://github.com/${entry.username}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`View ${entry.username}'s GitHub profile`}
+                          >
+                            <Image
+                              src={entry.avatar_url}
+                              alt={entry.username}
+                              width={32}
+                              height={32}
+                              className="w-10 h-10 rounded-full hover:opacity-80 transition-opacity"
+                            />
+                          </a>
                         ) : (
-                          <div className="w-10 h-10 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                            {entry.username.charAt(0).toUpperCase()}
-                          </div>
+                          <a
+                            href={`https://github.com/${entry.username}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`View ${entry.username}'s GitHub profile`}
+                          >
+                            <div className="w-10 h-10 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity">
+                              {entry.username.charAt(0).toUpperCase()}
+                            </div>
+                          </a>
                         )}
                       </div>
                       <div className="text-center">
-                        <div className="font-medium text-sm">
+                        <a
+                          href={`https://github.com/${entry.username}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-medium text-sm hover:underline text-blue-600 dark:text-blue-400"
+                        >
                           {entry.username}
-                        </div>
+                        </a>
                       </div>
                     </div>
                   </td>
