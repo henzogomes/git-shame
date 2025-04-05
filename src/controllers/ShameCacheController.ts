@@ -225,6 +225,37 @@ export class ShameCacheController {
   }
 
   /**
+   * Updates avatars for all records of a specific username that have no avatar
+   * @param username The GitHub username
+   * @param avatarUrl The avatar URL to set
+   * @returns Number of records updated
+   */
+  async updateMissingAvatars(
+    username: string,
+    avatarUrl: string
+  ): Promise<number> {
+    try {
+      const query = `
+        UPDATE shame_cache
+        SET avatar_url = $1
+        WHERE username = $2
+        AND (avatar_url IS NULL OR avatar_url = '')
+        RETURNING id
+      `;
+
+      const result = await client.query(query, [
+        avatarUrl,
+        username.toLowerCase(),
+      ]);
+
+      return result.rowCount ?? 0;
+    } catch (error) {
+      console.error("Error updating missing avatars:", error);
+      return 0;
+    }
+  }
+
+  /**
    * Retrieves all cache entries, sorted by last access time
    * @returns Array of ShameCache entries
    */
@@ -239,6 +270,26 @@ export class ShameCacheController {
       return result.rows;
     } catch (error) {
       console.error("Error fetching all shame cache entries:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Gets all unique usernames that have records with missing avatars
+   * @returns Array of usernames with missing avatars
+   */
+  async getUsersWithMissingAvatar(): Promise<string[]> {
+    try {
+      const query = `
+        SELECT username
+        FROM shame_cache
+        WHERE avatar_url IS NULL OR avatar_url = ''
+      `;
+
+      const result = await client.query(query);
+      return result.rows.map((row) => row.username);
+    } catch (error) {
+      console.error("Error fetching users with missing avatars:", error);
       return [];
     }
   }
