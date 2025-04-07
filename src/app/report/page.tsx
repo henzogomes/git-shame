@@ -1,7 +1,7 @@
+/* eslint-disable @next/next/no-img-element */
 import { NextPage } from "next";
 import { notFound } from "next/navigation";
 import { shameCacheController } from "@/controllers/ShameCacheController";
-import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import ClientSideParameterCleaner from "./ClientSideParameterCleaner";
 
@@ -90,7 +90,7 @@ const ReportPage: NextPage<ReportPageProps> = async ({ searchParams }) => {
                             rel="noopener noreferrer"
                             title={`View ${entry.username}'s GitHub profile`}
                           >
-                            <Image
+                            <img
                               src={entry.avatar_url}
                               alt={entry.username}
                               width={32}

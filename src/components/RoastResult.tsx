@@ -1,6 +1,6 @@
+/* eslint-disable @next/next/no-img-element */
 import React from "react";
 import ReactMarkdown from "react-markdown";
-import Image from "next/image";
 
 interface RoastResultProps {
   loading: boolean;
@@ -41,7 +41,7 @@ const RoastResult: React.FC<RoastResultProps> = ({
           <div className="flex items-center mb-4">
             {avatarUrl && (
               <div className="mr-4 flex-shrink-0">
-                <Image
+                <img
                   src={avatarUrl}
                   alt={`GitHub avatar for ${username || "user"}`}
                   width={64}
